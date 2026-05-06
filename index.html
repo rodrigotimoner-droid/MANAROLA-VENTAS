@@ -915,7 +915,9 @@ const TODOS_LOS_PRODUCTOS = [
 // ============ SUPABASE ============
 const SUPA_URL = 'https://gnqawbbiqhiwbxohkjtz.supabase.co';
 const SUPA_KEY = 'sb_publishable_KlneZBCAww0kHU5SrbdKPQ_Jdn811uT';
-const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
 
 // ============ STATE ============
 let productos=[], combos=[], ventas=[], carrito=[], pagoActual=null;
