@@ -441,6 +441,7 @@ tbody tr:hover td{background:var(--surface)}
     <span style="color:rgba(250,247,242,0.45);font-size:11px;font-weight:300;margin-left:2px;align-self:flex-end;padding-bottom:2px;">Sistema de Ventas</span>
   </div>
   <div class="header-right">
+    <span id="sync-badge" style="font-size:11px;padding:3px 10px;border-radius:20px;font-weight:500;background:#2a2a1a;color:#f2c94c">⟳ Conectando</span>
     <div class="clock">
       <div class="clock-time" id="currentTime"></div>
       <div class="clock-date" id="currentDate"></div>
@@ -570,8 +571,27 @@ tbody tr:hover td{background:var(--surface)}
   <div class="button-group">
     <button class="btn btn-primary" onclick="openProductModal()">＋ Nuevo Producto</button>
     <button class="btn btn-success" onclick="exportProductsToExcel()">📊 Exportar a Excel</button>
-    <button class="btn btn-secondary" onclick="resetAllProducts()">🔄 Restaurar Productos</button>
+    <button class="btn btn-secondary" onclick="descargarPlantillaExcel()">↓ Plantilla Excel</button>
+    <button class="btn btn-secondary" onclick="resetAllProducts()">🔄 Restaurar 128</button>
   </div>
+
+  <!-- ZONA IMPORTAR EXCEL -->
+  <div id="import-drop-zone"
+    style="border:2px dashed var(--border);border-radius:var(--r-lg);padding:1.5rem;text-align:center;
+           color:var(--muted);cursor:pointer;transition:all 0.2s;margin-bottom:1.2rem;background:var(--surface)"
+    onclick="document.getElementById('excel-input').click()"
+    ondragover="event.preventDefault();this.style.borderColor='var(--ember)';this.style.background='#FFF5F0'"
+    ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface)'"
+    ondrop="handleExcelDrop(event)">
+    <div style="font-size:28px;margin-bottom:6px">📥</div>
+    <div style="font-size:14px;font-weight:500;color:var(--brown)">Importar desde Excel</div>
+    <div style="font-size:12px;margin-top:4px">Arrastrá el archivo acá o hacé clic para seleccionar</div>
+    <div style="font-size:11px;margin-top:6px;color:var(--muted)">Formatos: .xlsx · .xls · .csv — Columnas: nombre, grupo, precio, unidad, stock, stock_min, stock_crit</div>
+  </div>
+  <input type="file" id="excel-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarDesdeExcel(this)">
+
+  <div id="import-resultado" style="display:none;margin-bottom:12px"></div>
+
   <div class="table-container">
     <table>
       <thead><tr><th>#</th><th>Nombre</th><th>Grupo</th><th>Precio</th><th>Unidad</th><th>Acciones</th></tr></thead>
@@ -963,15 +983,41 @@ async function cargarVentas() {
 }
 
 async function cargarProductosPorDefecto() {
-  toast('Cargando 128 productos por defecto...','⏳');
-  const rows=TODOS_LOS_PRODUCTOS.map(p=>({
+  toast('Cargando productos...','⏳');
+  const rows = TODOS_LOS_PRODUCTOS.map(p=>({
     nombre:p.nombre, grupo:p.grupo, precio:p.precio,
-    stock:p.stock, stock_min:p.stockMin||0, stock_crit:Math.floor((p.stockMin||0)/2), unidad:p.unidad
+    stock:p.stock, stock_min:p.stockMin||0,
+    stock_crit:Math.floor((p.stockMin||0)/2), unidad:p.unidad
   }));
-  const {error}=await sb.from('productos').insert(rows);
-  if(error) throw error;
+  // Insertar de a 20 para evitar límites de Supabase
+  const loteSize = 20;
+  let cargados = 0;
+  for(let i=0; i<rows.length; i+=loteSize) {
+    const lote = rows.slice(i, i+loteSize);
+    const {error} = await sb.from('productos').insert(lote);
+    if(error) { toast('Error al cargar: '+error.message,'✕'); throw error; }
+    cargados += lote.length;
+    toast(`Cargando... ${cargados}/${rows.length}`,'⏳');
+  }
   await cargarProductos();
-  toast('128 productos cargados','✓');
+  actualizarTodo();
+  toast(`✓ ${cargados} productos cargados correctamente`,'✓');
+}
+
+async function resetAllProducts(){
+  if(!confirm('¿Restaurar los 128 productos originales? Esto borrará los actuales.')) return;
+  setSyncBadge('load');
+  try {
+    // Borrar primero
+    const {error:delErr} = await sb.from('productos').delete().neq('id',0);
+    if(delErr) throw delErr;
+    // Cargar los 128
+    await cargarProductosPorDefecto();
+    setSyncBadge('ok');
+  } catch(e) {
+    setSyncBadge('err');
+    toast('Error: '+e.message,'✕');
+  }
 }
 
 // ── Realtime: recarga cuando otra compu cambia datos ──
@@ -1397,6 +1443,18 @@ function limpiarFiltroVentas() {
   if(f) f.value=''; if(b) b.value='';
   mostrarVentas();
 }
+function openEditVentaModal(id) {
+  const v=ventas.find(x=>String(x.id)===String(id)); if(!v) return;
+  document.getElementById('editVentaId').value=v.id;
+  document.getElementById('editVentaProducto').value=v.producto;
+  document.getElementById('editVentaCantidad').value=v.cantidad;
+  document.getElementById('editVentaTotal').value=v.total;
+  document.getElementById('editVentaMetodo').value=v.pago;
+  document.getElementById('editVentaTransaccion').value=v.nroTransaccion||'';
+  document.getElementById('editVentaModal').classList.add('show');
+}
+function closeEditVentaModal(){document.getElementById('editVentaModal').classList.remove('show');}
+
 async function eliminarVenta(id) {
   if(!confirm('¿Eliminar esta venta?')) return;
   const v=ventas.find(x=>String(x.id)===String(id));
@@ -1592,12 +1650,121 @@ async function deleteProduct(id){
   if(error){setSyncBadge('err');toast('Error: '+error.message,'✕');return;}
   setSyncBadge('ok'); await cargarProductos(); actualizarTodo(); toast('Producto eliminado','🗑');
 }
-async function resetAllProducts(){
-  if(!confirm('¿Restaurar los 128 productos originales? Esto borrará los actuales.')) return;
-  setSyncBadge('load');
-  await sb.from('productos').delete().neq('id',0);
-  await cargarProductosPorDefecto();
-  setSyncBadge('ok'); actualizarTodo(); toast('128 productos restaurados','🔄');
+// ============ IMPORTAR EXCEL ============
+function handleExcelDrop(e) {
+  e.preventDefault();
+  const zone=document.getElementById('import-drop-zone');
+  zone.style.borderColor='var(--border)'; zone.style.background='var(--surface)';
+  const file=e.dataTransfer.files[0];
+  if(file) procesarArchivoExcel(file);
+}
+
+function importarDesdeExcel(input) {
+  const file=input.files[0]; if(!file) return;
+  procesarArchivoExcel(file);
+  input.value='';
+}
+
+async function procesarArchivoExcel(file) {
+  const esCSV = file.name.endsWith('.csv');
+  const res=document.getElementById('import-resultado');
+  res.style.display='block';
+  res.innerHTML=`<div style="padding:10px 14px;background:var(--warm);border-radius:var(--r);font-size:13px;color:var(--brown)">⟳ Procesando ${file.name}...</div>`;
+
+  try {
+    const buffer=await file.arrayBuffer();
+    const wb=XLSX.read(buffer,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+
+    if(!rows.length){
+      res.innerHTML=`<div class="alert-stock alert-minimo">⚠ El archivo está vacío o no tiene datos.</div>`;
+      return;
+    }
+
+    // Normalizar encabezados — acepta variantes en español e inglés
+    const norm=s=>String(s||'').toLowerCase().trim()
+      .replace(/[áa]/g,'a').replace(/[éeè]/g,'e').replace(/[íi]/g,'i')
+      .replace(/[óo]/g,'o').replace(/[úu]/g,'u').replace(/\s+/g,'_');
+
+    const cols=Object.keys(rows[0]);
+    const find=(...keys)=>cols.find(c=>keys.some(k=>norm(c).includes(norm(k))))||null;
+
+    const cNombre  = find('nombre','name','producto');
+    const cGrupo   = find('grupo','category','categoria','group');
+    const cPrecio  = find('precio','price','costo');
+    const cUnidad  = find('unidad','unit','um');
+    const cStock   = find('stock_actual','stock');
+    const cStockMin= find('stock_min','minimo','min');
+    const cStockCrit= find('stock_crit','critico','crit');
+
+    if(!cNombre||!cPrecio){
+      res.innerHTML=`<div class="alert-stock alert-critico">✕ No se encontraron columnas <strong>nombre</strong> y <strong>precio</strong>. Revisá el archivo.</div>`;
+      return;
+    }
+
+    let nuevos=0, actualizados=0, errores=0;
+    setSyncBadge('load');
+
+    for(const row of rows) {
+      const nombre=String(row[cNombre]||'').trim();
+      const precio=parseFloat(String(row[cPrecio]||'0').replace(',','.'));
+      if(!nombre||isNaN(precio)||precio<=0){errores++;continue;}
+
+      const grupo=cGrupo?String(row[cGrupo]||'Otros').trim().toUpperCase():'Otros';
+      const unidRaw=cUnidad?String(row[cUnidad]||'').trim().toLowerCase():'';
+      const unidad=unidRaw.includes('kg')?'kg':'unidad';
+      const stock=cStock?parseFloat(String(row[cStock]||'0').replace(',','.'))||0:0;
+      const stock_min=cStockMin?parseFloat(String(row[cStockMin]||'0').replace(',','.'))||0:0;
+      const stock_crit=cStockCrit?parseFloat(String(row[cStockCrit]||'0').replace(',','.'))||0:Math.floor(stock_min/2);
+
+      // ¿Ya existe en Supabase?
+      const existente=productos.find(p=>p.nombre.toLowerCase()===nombre.toLowerCase());
+      if(existente) {
+        const {error}=await sb.from('productos')
+          .update({grupo,precio,unidad,stock,stock_min,stock_crit})
+          .eq('id',existente.id);
+        if(error) errores++; else actualizados++;
+      } else {
+        const {error}=await sb.from('productos')
+          .insert({nombre,grupo,precio,unidad,stock,stock_min,stock_crit});
+        if(error) errores++; else nuevos++;
+      }
+    }
+
+    setSyncBadge('ok');
+    await cargarProductos();
+    actualizarTodo();
+
+    const color=errores>0?'alert-minimo':'alert-stock';
+    res.innerHTML=`<div class="alert-stock ${errores>0?'alert-minimo':'badge-ok'}"
+      style="background:${errores>0?'#FEF3C7':'#EFF7F2'};border:1px solid ${errores>0?'#FCD34D':'#86efac'};
+             border-radius:var(--r);padding:12px 16px;font-size:13px;color:${errores>0?'#92400E':'#2E6B3E'}">
+      ✓ Importación completada —
+      <strong>${nuevos}</strong> productos nuevos ·
+      <strong>${actualizados}</strong> actualizados
+      ${errores>0?`· <strong>${errores}</strong> filas con errores`:''}
+    </div>`;
+    setTimeout(()=>{res.style.display='none';},5000);
+
+  } catch(e) {
+    setSyncBadge('err');
+    res.innerHTML=`<div class="alert-stock alert-critico">✕ Error al leer el archivo: ${e.message}</div>`;
+  }
+}
+
+function descargarPlantillaExcel() {
+  const datos=[
+    {nombre:'Ravioles ricota',grupo:'RAVIOLES',precio:2500,unidad:'kg',stock:50,stock_min:10,stock_crit:5},
+    {nombre:'Empanadas de carne',grupo:'EMPANADAS',precio:1200,unidad:'unidad',stock:100,stock_min:20,stock_crit:10},
+    {nombre:'Coca Cola 500ml',grupo:'GASEOSAS',precio:600,unidad:'unidad',stock:50,stock_min:10,stock_crit:5},
+  ];
+  const ws=XLSX.utils.json_to_sheet(datos);
+  // Ancho de columnas
+  ws['!cols']=[{wch:30},{wch:15},{wch:10},{wch:10},{wch:8},{wch:10},{wch:12}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Productos');
+  XLSX.writeFile(wb,'plantilla_productos.xlsx');
 }
 function exportProductsToExcel(){
   const ws=XLSX.utils.json_to_sheet(productos.map(p=>({ID:p.id,Nombre:p.nombre,Grupo:p.grupo,Precio:p.precio,Stock:p.stock,StockMin:p.stockMin,Unidad:p.unidad})));
