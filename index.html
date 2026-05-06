@@ -914,10 +914,8 @@ const TODOS_LOS_PRODUCTOS = [
 
 // ============ SUPABASE ============
 const SUPA_URL = 'https://gnqawbbiqhiwbxohkjtz.supabase.co';
-const SUPA_KEY = 'sb_publishable_KlneZBCAww0kHU5SrbdKPQ_Jdn811uT';
-const sb = supabase.createClient(SUPA_URL, SUPA_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false }
-});
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzc4MTA5OTI4LCJleHAiOjIwOTM0Njk5Mjh9.AI3t1PoKxqzHVWVEyQD6a0sruiaHx4yLroWnWL_wa44';
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
 
 // ============ STATE ============
 let productos=[], combos=[], ventas=[], carrito=[], pagoActual=null;
@@ -940,7 +938,6 @@ async function init() {
   try {
     await Promise.all([cargarProductos(), cargarCombos(), cargarVentas()]);
     setSyncBadge('ok');
-    // Si no hay productos en Supabase, cargar los 128 por defecto
     if(productos.length===0) await cargarProductosPorDefecto();
     actualizarTodo();
     iniciarRealtime();
